@@ -1,0 +1,535 @@
+<link rel="stylesheet" href="/images/inky_gallery/inky_gallery.css?v=2">
+
+<div class="form-group">
+    <label for="folder_path" class="form-label">Folder path:</label>
+    <div class="folder-picker-row">
+        <input type="text" id="folder_path" name="folder_path" placeholder="Select a folder..." required class="form-input" readonly>
+        <button type="button" id="browseFoldersBtn" class="back-button">Browse</button>
+    </div>
+    <div id="folderStatus" class="folder-status"></div>
+</div>
+
+<div id="folderBrowser" class="folder-browser hidden">
+    <div class="folder-browser-header">
+        <div class="folder-browser-title">Image Directories</div>
+        <button type="button" id="closeFolderBrowser" class="back-button">Close</button>
+    </div>
+    <div id="folderTree" class="folder-tree" role="tree" aria-label="Folder browser"></div>
+</div>
+
+<div class="form-group" style="display:flex; align-items:center; gap:10px; margin-top: 10px;">
+    <label for="tagFilter" class="form-label" style="margin:0; white-space:nowrap;">Tag Filter:</label>
+    <input
+        type="text"
+        id="tagFilter"
+        name="tagFilter"
+        placeholder="Optional tag filter..."
+        class="form-input"
+        list="tagFilterSuggestions"
+        autocomplete="off"
+        style="flex:1; margin:0;"
+    >
+    <datalist id="tagFilterSuggestions"></datalist>
+</div>
+
+<div class="form-group">
+    <label for="showCaptions" class="form-label">Show Captions:</label>
+    <div class="toggle-container">
+        <input type="checkbox" id="showCaptions" name="showCaptions" class="toggle-checkbox"
+               value="false" onclick="this.value = this.checked ? 'true' : 'false'">
+        <label for="showCaptions" class="toggle-label"></label>
+    </div>
+</div>
+
+<div class="form-group">
+    <div class="form-group">
+        <label for="padImage" class="form-label">Scale to Fit:</label>
+        <div class="toggle-container">
+            <input type="checkbox" id="padImage" name="padImage" class="toggle-checkbox" value="false">
+            <label for="padImage" class="toggle-label"></label>
+            <input type="hidden" name="padImage" value="true">
+        </div>
+    </div>
+
+
+    <div class="form-group">
+        <label class="form-label" for="backgroundOption">Background:</label>
+        <div class="form-group">
+            <input type="radio" id="backgroundOptionBlur"  name="backgroundOption" value="blur">
+            <label for="backgroundOptionBlur">Blur</label>
+            <input type="radio" id="backgroundOptionColor" name="backgroundOption" value="color">
+            <label for="backgroundOptionColor">Color</label>
+            <input type="color" id="backgroundColor" name="backgroundColor" value="#ffffff" class="color-picker"/>
+        </div>
+    </div>
+</div>
+
+<!-- Image Adjustment Sliders -->
+<div class="collapsible">
+    <button type="button" class="collapsible-header" onclick="toggleCollapsible(this)">
+        Image Settings <span class="collapsible-icon">▼</span>
+    </button>
+    <div class="settings-container collapsible-content">
+        <div class="form-group">
+            <label for="saturation" class="form-label" style="min-width: 100px;">Saturation:</label>
+            <span id="saturation-value">1.0</span>
+            <input type="range" id="saturation" name="saturation" class="form-input"
+                   min="0" max="2" step="0.1" value="1.0" style="max-width: 400px;"
+                   oninput="updateSliderValue(this)">
+        </div>
+        <div class="form-group">
+            <label for="brightness" class="form-label" style="min-width: 100px;">Brightness:</label>
+            <span id="brightness-value">1.0</span>
+            <input type="range" id="brightness" name="brightness" class="form-input"
+                   min="0" max="2" step="0.1" value="1.0" style="max-width: 400px;"
+                   oninput="updateSliderValue(this)">
+        </div>
+        <div class="form-group">
+            <label for="contrast" class="form-label" style="min-width: 100px;">Contrast:</label>
+            <span id="contrast-value">1.0</span>
+            <input type="range" id="contrast" name="contrast" class="form-input"
+                   min="0" max="2" step="0.1" value="1.0" style="max-width: 400px;"
+                   oninput="updateSliderValue(this)">
+        </div>
+        <div class="form-group">
+            <label for="sharpness" class="form-label" style="min-width: 100px;">Sharpness:</label>
+            <span id="sharpness-value">1.0</span>
+            <input type="range" id="sharpness" name="sharpness" class="form-input"
+                   min="0" max="2" step="0.1" value="1.0" style="max-width: 400px;"
+                   oninput="updateSliderValue(this)">
+        </div>
+
+        <div class="form-group" style="margin-top: 10px;">
+            <label for="lut" class="form-label" style="min-width: 100px;">Color Preset:</label>
+            <select id="lut" name="lut" class="form-input" style="max-width: 400px;" onchange="onLutChange()">
+                <option value="">None</option>
+                {% for opt in lut_options %}
+                <option value="{{ opt.value }}">{{ opt.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+</div>
+
+<script>
+const LS_KEY_GALLERY = "inkyGallery_ui_settings_v1";
+const FOLDER_STORAGE_KEY = "inkyGalleryLastFolder";
+
+// System defaults and LUT data injected by the backend
+const systemDefaults = {{ system_image_settings | tojson }};
+const lutData        = {{ lut_data | tojson }};
+
+const folderTreeState = new Map();
+let selectedFolderPath = null;
+
+// ---------------------------------------------------------------------------
+// localStorage helpers
+// ---------------------------------------------------------------------------
+
+function _lsRead() {
+    try {
+        const raw = localStorage.getItem(LS_KEY_GALLERY);
+        return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+}
+
+function _lsWrite(obj) {
+    try { localStorage.setItem(LS_KEY_GALLERY, JSON.stringify(obj || {})); } catch {}
+}
+
+function _saveAllSettings() {
+    const s = _lsRead();
+    s.showCaptions    = document.getElementById("showCaptions").checked;
+    s.padImage        = document.getElementById("padImage").checked;
+    const bgRadio     = document.querySelector('input[name="backgroundOption"]:checked');
+    s.backgroundOption = bgRadio ? bgRadio.value : "blur";
+    s.backgroundColor = document.getElementById("backgroundColor").value || "#ffffff";
+    s.saturation      = parseFloat(document.getElementById("saturation").value);
+    s.brightness      = parseFloat(document.getElementById("brightness").value);
+    s.contrast        = parseFloat(document.getElementById("contrast").value);
+    s.sharpness       = parseFloat(document.getElementById("sharpness").value);
+    s.lut             = document.getElementById("lut").value;
+    _lsWrite(s);
+}
+
+// ---------------------------------------------------------------------------
+// Slider helpers
+// ---------------------------------------------------------------------------
+
+function updateSliderValue(slider) {
+    const display = document.getElementById(slider.id + "-value");
+    if (display) display.textContent = parseFloat(slider.value).toFixed(1);
+    _saveAllSettings();
+}
+
+function setSlider(id, val) {
+    const slider = document.getElementById(id);
+    if (slider) {
+        slider.value = val;
+        const display = document.getElementById(id + "-value");
+        if (display) display.textContent = parseFloat(val).toFixed(1);
+    }
+}
+
+function setSlidersLocked(locked) {
+    ["saturation", "brightness", "contrast", "sharpness"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = locked;
+    });
+}
+
+function onLutChange() {
+    const lutName = document.getElementById("lut").value;
+
+    if (!lutName) {
+        setSlidersLocked(false);
+        ["saturation", "brightness", "contrast", "sharpness"].forEach(id => setSlider(id, 1.0));
+    } else {
+        const lut = lutData[lutName];
+        if (lut) {
+            const sliders = lut.sliders || {};
+            ["saturation", "brightness", "contrast", "sharpness"].forEach(id => {
+                const val = (id in sliders) ? sliders[id] : (systemDefaults[id] || 1.0);
+                setSlider(id, val);
+            });
+        }
+        setSlidersLocked(true);
+    }
+
+    _saveAllSettings();
+}
+
+function toggleCollapsible(button) {
+    const content = button.nextElementSibling;
+    const icon    = button.querySelector(".collapsible-icon");
+    button.classList.toggle("active");
+    content.style.display = content.style.display === "block" ? "none" : "block";
+    icon.textContent = content.style.display === "block" ? "▲" : "▼";
+}
+
+// ---------------------------------------------------------------------------
+// Status helpers
+// ---------------------------------------------------------------------------
+
+function setFolderStatus(message, ok = true) {
+    const el = document.getElementById('folderStatus');
+    el.textContent = message || "";
+    el.style.color = ok ? "var(--success-color)" : "var(--failure-color)";
+}
+
+// ---------------------------------------------------------------------------
+// Tag helpers
+// ---------------------------------------------------------------------------
+
+function populateTagDatalist(tags) {
+    const datalist = document.getElementById('tagFilterSuggestions');
+    datalist.innerHTML = "";
+    (tags || []).forEach(tag => {
+        const opt = document.createElement("option");
+        opt.value = tag;
+        datalist.appendChild(opt);
+    });
+}
+
+async function loadTagsForFolder(folderPath, force = false) {
+    if (!folderPath) return;
+
+    const endpoint = force
+        ? '/plugin/inky_gallery/refresh_tags'
+        : `/plugin/inky_gallery/folder_tags?path=${encodeURIComponent(folderPath)}`;
+
+    try {
+        let res, data;
+        if (force) {
+            res = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: folderPath }),
+                cache: "no-store"
+            });
+        } else {
+            res = await fetch(endpoint, { cache: "no-store" });
+        }
+
+        data = await res.json().catch(() => null);
+
+        if (res.ok && data && data.ok) {
+            populateTagDatalist(data.tags || []);
+        }
+    } catch (e) {
+        console.error("Failed to load tags:", e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Folder browser
+// ---------------------------------------------------------------------------
+
+function showFolderBrowser(show) {
+    document.getElementById('folderBrowser').classList.toggle('hidden', !show);
+}
+
+function refreshTreeStriping() {
+    const rows = document.querySelectorAll('#folderTree .tree-row');
+    rows.forEach((row, index) => {
+        row.classList.remove('tree-row-odd', 'tree-row-even');
+        row.classList.add(index % 2 === 0 ? 'tree-row-even' : 'tree-row-odd');
+    });
+}
+
+function selectFolder(path, imageCount, rowEl) {
+    selectedFolderPath = path;
+
+    document.getElementById('folder_path').value = path;
+    localStorage.setItem(FOLDER_STORAGE_KEY, path);
+    setFolderStatus(`${imageCount} images found`, imageCount > 0);
+
+    document.querySelectorAll('.tree-row.selected').forEach(el => el.classList.remove('selected'));
+    if (rowEl) {
+        rowEl.classList.add('selected');
+        rowEl.focus();
+    }
+
+    loadTagsForFolder(path, true);
+}
+
+async function fetchTreeRoots() {
+    const res  = await fetch('/plugin/inky_gallery/tree_roots');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load roots');
+    return data.roots || [];
+}
+
+async function fetchTreeChildren(path) {
+    const res  = await fetch(`/plugin/inky_gallery/tree_children?path=${encodeURIComponent(path)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load children');
+    return data.children || [];
+}
+
+function createTreeRow(node, depth = 0) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'tree-node';
+
+    const row = document.createElement('div');
+    row.className = 'tree-row';
+    row.setAttribute('role', 'treeitem');
+    row.setAttribute('tabindex', '0');
+    row.dataset.path = node.path;
+    row.style.paddingLeft = `${depth * 20 + 8}px`;
+
+    const expander = document.createElement('button');
+    expander.type  = 'button';
+    expander.className = 'tree-expander';
+    expander.setAttribute('aria-label', node.has_children ? 'Expand folder' : 'No subfolders');
+    expander.textContent = node.has_children ? '▶' : '';
+    expander.disabled    = !node.has_children;
+
+    const folderIcon = document.createElement('img');
+    folderIcon.className = 'tree-folder-icon';
+    folderIcon.src = '/images/inky_gallery/folder.png';
+    folderIcon.alt = '';
+
+    const name = document.createElement('span');
+    name.className   = 'tree-folder-name';
+    name.textContent = node.name;
+
+    const count = document.createElement('span');
+    count.className   = 'tree-folder-count';
+    count.textContent = `${node.image_count} images`;
+
+    row.appendChild(expander);
+    row.appendChild(folderIcon);
+    row.appendChild(name);
+    row.appendChild(count);
+
+    const children = document.createElement('div');
+    children.className = 'tree-children hidden';
+
+    wrapper.appendChild(row);
+    wrapper.appendChild(children);
+
+    folderTreeState.set(node.path, {
+        expanded: false, loaded: false,
+        childrenContainer: children, expanderEl: expander, rowEl: row, depth
+    });
+
+    row.addEventListener('click', (e) => {
+        if (e.target === expander) return;
+        selectFolder(node.path, node.image_count, row);
+    });
+
+    row.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            selectFolder(node.path, node.image_count, row);
+        } else if (e.key === 'ArrowRight' && node.has_children) {
+            e.preventDefault();
+            const state = folderTreeState.get(node.path);
+            if (!state.expanded) await toggleNode(node.path);
+        } else if (e.key === 'ArrowLeft' && node.has_children) {
+            e.preventDefault();
+            const state = folderTreeState.get(node.path);
+            if (state.expanded) await toggleNode(node.path);
+        }
+    });
+
+    expander.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!node.has_children) return;
+        await toggleNode(node.path);
+    });
+
+    return wrapper;
+}
+
+async function toggleNode(path) {
+    const state = folderTreeState.get(path);
+    if (!state) return;
+
+    if (state.expanded) {
+        state.expanded = false;
+        state.childrenContainer.classList.add('hidden');
+        state.expanderEl.textContent = '▶';
+        refreshTreeStriping();
+        return;
+    }
+
+    if (!state.loaded) {
+        try {
+            const children = await fetchTreeChildren(path);
+            state.childrenContainer.innerHTML = '';
+            children.forEach(child => {
+                state.childrenContainer.appendChild(createTreeRow(child, state.depth + 1));
+            });
+            state.loaded = true;
+            refreshTreeStriping();
+        } catch (err) {
+            setFolderStatus(err.message || 'Failed to load folders', false);
+            return;
+        }
+    }
+
+    state.expanded = true;
+    state.childrenContainer.classList.remove('hidden');
+    state.expanderEl.textContent = '▼';
+    refreshTreeStriping();
+}
+
+async function renderFolderTree() {
+    const tree = document.getElementById('folderTree');
+    tree.innerHTML = '<div class="folder-tree-loading">Loading folders...</div>';
+    folderTreeState.clear();
+
+    try {
+        const roots = await fetchTreeRoots();
+        tree.innerHTML = '';
+
+        if (!roots.length) {
+            tree.innerHTML = '<div class="folder-empty">No allowed image folders found.</div>';
+            return;
+        }
+
+        roots.forEach(root => tree.appendChild(createTreeRow(root, 0)));
+        refreshTreeStriping();
+    } catch (err) {
+        tree.innerHTML = '<div class="folder-empty">Failed to load folders.</div>';
+        setFolderStatus(err.message || 'Failed to load folders', false);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+document.addEventListener('DOMContentLoaded', () => {
+    let backgroundOption = "blur";
+
+    // Restore saved plugin settings from the server
+    if (loadPluginSettings) {
+        const savedPath = pluginSettings.folder_path || "";
+        document.getElementById('folder_path').value = savedPath;
+        document.getElementById('padImage').checked  = pluginSettings.padImage == 'false';
+        document.getElementById('backgroundColor').value = pluginSettings.backgroundColor || "#ffffff";
+        document.getElementById('tagFilter').value   = pluginSettings.tagFilter || "";
+        backgroundOption = pluginSettings.backgroundOption || "blur";
+
+        if (savedPath) {
+            selectedFolderPath = savedPath;
+            loadTagsForFolder(savedPath, false);
+        }
+    }
+
+    // Fall back to localStorage folder if nothing saved server-side
+    if (!document.getElementById('folder_path').value) {
+        const savedFolder = localStorage.getItem(FOLDER_STORAGE_KEY);
+        if (savedFolder) {
+            document.getElementById('folder_path').value = savedFolder;
+            selectedFolderPath = savedFolder;
+            setFolderStatus("Restored folder from this browser");
+            loadTagsForFolder(savedFolder, false);
+        }
+    }
+
+    // Restore LUT + sliders + toggles from localStorage
+    const saved = _lsRead();
+
+    if (typeof saved.showCaptions === "boolean") {
+        document.getElementById("showCaptions").checked = saved.showCaptions;
+        document.getElementById("showCaptions").value   = saved.showCaptions ? "true" : "false";
+    }
+
+   if (typeof saved.padImage === "boolean") {
+    document.getElementById("padImage").checked = saved.padImage;
+    document.getElementById("padImage").value   = saved.padImage ? "false" : "true";
+    }
+
+    if (saved.backgroundOption) backgroundOption = saved.backgroundOption;
+    if (saved.backgroundColor)  document.getElementById("backgroundColor").value = saved.backgroundColor;
+
+    // LUT must be restored before sliders
+    const savedLut  = saved.lut || "";
+    const lutSelect = document.getElementById("lut");
+    if (lutSelect) lutSelect.value = savedLut;
+
+    if (savedLut && lutData[savedLut]) {
+        const sliders = lutData[savedLut].sliders || {};
+        ["saturation", "brightness", "contrast", "sharpness"].forEach(id => {
+            setSlider(id, (id in sliders) ? sliders[id] : (systemDefaults[id] || 1.0));
+        });
+        setSlidersLocked(true);
+    } else {
+        ["saturation", "brightness", "contrast", "sharpness"].forEach(id => {
+            setSlider(id, typeof saved[id] === "number" ? saved[id] : (systemDefaults[id] || 1.0));
+        });
+        setSlidersLocked(false);
+    }
+
+    const bgRadio = document.querySelector(`input[name="backgroundOption"][value="${backgroundOption}"]`);
+    if (bgRadio) bgRadio.checked = true;
+
+    // Auto-save on any change
+    ["showCaptions", "padImage", "backgroundColor",
+     "saturation", "brightness", "contrast", "sharpness", "lut"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("change", _saveAllSettings);
+            el.addEventListener("input",  _saveAllSettings);
+        }
+    });
+    document.querySelectorAll('input[name="backgroundOption"]').forEach(el => {
+        el.addEventListener("change", _saveAllSettings);
+    });
+
+    // Folder browser events
+    document.getElementById('browseFoldersBtn').addEventListener('click', async () => {
+        showFolderBrowser(true);
+        await renderFolderTree();
+    });
+
+    document.getElementById('closeFolderBrowser').addEventListener('click', () => {
+        showFolderBrowser(false);
+    });
+
+});
+</script>
