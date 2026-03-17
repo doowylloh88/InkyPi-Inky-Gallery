@@ -24,7 +24,7 @@ An upgrade to the image album plugin.  Now with optional tag filtering, captions
 3. Install the plugin using the InkyPi CLI, providing the plugin ID & GitHub repository URL:
 
 ```bash
-inkypi plugin install image_gallery https://github.com/doowylloh88/image_gallery
+inkypi plugin install inky_gallery https://github.com/doowylloh88/InkyPi-Inky-Gallery
 ```
 
 ## How it works
