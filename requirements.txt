@@ -1,0 +1,12 @@
+# inky_gallery NAS support requirements
+# Install with: pip install -r requirements.txt
+
+# Required: SMB/CIFS protocol support for network drive browsing
+smbprotocol
+
+# Optional: Enables full share enumeration on Windows/Samba servers
+# (macOS home shares work without this)
+# impacket
+
+# System package required (install via apt, not pip):
+# sudo apt install cifs-utils
