@@ -204,3 +204,13 @@ html[data-theme="dark"] .tree-folder-count {
     color: var(--text-secondary);
     background-color: var(--bg-secondary);
 }
+
+#nasConnectBtn {
+    background-color: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+#nasConnectBtn:hover {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+}

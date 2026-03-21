@@ -12,6 +12,7 @@ from io import BytesIO
 from blueprints.plugin import plugin_bp
 from utils.image_utils import pad_image_blur, apply_image_enhancement
 from flask import jsonify, request, current_app
+from plugins.inky_gallery.nas_scanner import scan_for_nas_hosts, smb_register, smb_list_shares, smb_tree_children, smb_mount, smb_is_mounted, get_mount_point
 
 logger = logging.getLogger(__name__)
 
@@ -369,7 +370,6 @@ def tree_roots():
 
     return jsonify({"roots": roots})
 
-
 @plugin_bp.route("/plugin/inky_gallery/tree_children", methods=["GET"])
 def tree_children():
     blocked_root = os.path.abspath("/home/inky/InkyPi")
@@ -415,6 +415,36 @@ def tree_children():
     except Exception as e:
         logger.error(f"Error loading folder tree children for {requested_path}: {e}")
         return jsonify({"error": "Failed to browse folders"}), 500
+
+
+#NAS
+@plugin_bp.route("/plugin/inky_gallery/scan_nas", methods=["GET"])
+def inky_gallery_scan_nas():
+    try:
+        hosts = scan_for_nas_hosts()
+        return jsonify({"ok": True, "hosts": hosts})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@plugin_bp.route("/plugin/inky_gallery/nas_connect", methods=["POST"])
+def inky_gallery_nas_connect():
+    body     = request.get_json(silent=True) or {}
+    host     = (body.get("host") or "").strip()
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    if not host:
+        return jsonify({"ok": False, "error": "host is required"}), 400
+    ok, msg = smb_register(host, username, password)
+    if not ok:
+        return jsonify({"ok": False, "error": msg}), 401
+    shares = smb_list_shares(host)
+    # Mount each share
+    for share in shares:
+        mount_ok, mount_result = smb_mount(host, share, username, password)
+        if not mount_ok:
+            print(f"[NAS] Warning: could not mount {share}: {mount_result}")
+    return jsonify({"ok": True, "shares": shares, "enum_failed": len(shares) == 0})
 
 
 @plugin_bp.route("/plugin/inky_gallery/folder_tags", methods=["GET"])
@@ -487,6 +517,19 @@ def refresh_tags():
     except Exception as e:
         logger.error(f"Error refreshing tags for {requested_path}: {e}")
         return jsonify({"ok": False, "error": "Failed to refresh tags"}), 500
+
+
+@plugin_bp.route("/plugin/inky_gallery/nas_tree_children", methods=["POST"])
+def inky_gallery_nas_tree_children():
+    from plugins.inky_gallery.nas_scanner import smb_tree_children
+    body  = request.get_json(silent=True) or {}
+    host  = (body.get("host")  or "").strip()
+    share = (body.get("share") or "").strip()
+    path  = (body.get("path")  or "").strip("/")
+    if not host or not share:
+        return jsonify({"ok": False, "error": "host and share required"}), 400
+    nodes = smb_tree_children(host, share, path)
+    return jsonify({"ok": True, "children": nodes})
 
 
 # ---------------------------------------------------------------------------

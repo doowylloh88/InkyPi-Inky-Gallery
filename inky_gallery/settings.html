@@ -15,7 +15,44 @@
         <button type="button" id="closeFolderBrowser" class="back-button">Close</button>
     </div>
     <div id="folderTree" class="folder-tree" role="tree" aria-label="Folder browser"></div>
+
+    <!-- Network Drives — hidden until hosts found -->
+    <div id="nasBrowserSection" class="hidden">
+        <div class="folder-browser-header" style="border-top: 1px solid var(--border-color);">
+            <div class="folder-browser-title">Network Drives</div>
+        </div>
+        <div id="nasHostList" class="folder-tree"></div>
+    </div>
 </div>
+
+<!-- NAS Credential Modal -->
+<div id="nasCredModal" class="modal">
+    <div class="modal-content">
+        <span class="close-button" onclick="closeNasModal()">&times;</span>
+        <h2>Connect to NAS</h2>
+        <div class="form-group">
+            <label class="form-label">Username</label>
+            <input id="nasUsername" class="form-input" type="text"
+                   placeholder="Your NAS username"
+                   autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Password</label>
+            <input id="nasPassword" class="form-input" type="password"
+                   placeholder="Your NAS password"
+                   autocomplete="current-password">
+        </div>
+        <div id="nasError" style="display:none;color:var(--failure-color);
+             font-size:0.85rem;margin-bottom:8px;"></div>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+            <button class="back-button" onclick="closeNasModal()">Cancel</button>
+            <button id="nasConnectBtn" class="back-button"
+                onclick="submitNasCredentials()">Connect</button>
+        </div>
+    </div>
+</div>
+
+
 
 <div class="form-group" style="display:flex; align-items:center; gap:10px; margin-top: 10px;">
     <label for="tagFilter" class="form-label" style="margin:0; white-space:nowrap;">Tag Filter:</label>
@@ -521,10 +558,12 @@ document.addEventListener('DOMContentLoaded', () => {
         el.addEventListener("change", _saveAllSettings);
     });
 
+    
     // Folder browser events
     document.getElementById('browseFoldersBtn').addEventListener('click', async () => {
         showFolderBrowser(true);
         await renderFolderTree();
+        startNasScan();
     });
 
     document.getElementById('closeFolderBrowser').addEventListener('click', () => {
@@ -532,4 +571,273 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
 });
+// ── NAS state ──────────────────────────────────────────────
+let nasPending = null;  // {ip, hostname} of host being connected to
+const nasState = { host: null, share: null };
+const nasTreeState = new Map();
+
+async function startNasScan() {
+    try {
+        const res  = await fetch('/plugin/inky_gallery/scan_nas');
+        const data = await res.json();
+        if (data.ok && data.hosts && data.hosts.length > 0) {
+            renderNasHosts(data.hosts);
+        }
+        // If no hosts found, section stays hidden — nothing shown
+    } catch(e) {
+        // Scan failed silently — no NAS section shown
+    }
+}
+
+function renderNasHosts(hosts) {
+    const list = document.getElementById('nasHostList');
+    list.innerHTML = '';
+
+    hosts.forEach(h => {
+        const row = document.createElement('div');
+        row.className = 'tree-row';
+        row.style.cursor = 'pointer';
+
+        const icon = document.createElement('span');
+        icon.style.marginRight = '6px';
+        icon.textContent = '🖥️';
+
+        const name = document.createElement('span');
+        name.className = 'tree-folder-name';
+        name.textContent = h.hostname + ' (' + h.ip + ')';
+
+        row.appendChild(icon);
+        row.appendChild(name);
+        row.addEventListener('click', () => openNasModal(h.ip, h.hostname));
+        list.appendChild(row);
+    });
+
+    document.getElementById('nasBrowserSection').classList.remove('hidden');
+}
+
+// ── NAS credential modal ───────────────────────────────────
+function openNasModal(ip, hostname) {
+    nasPending = {ip, hostname};
+    document.querySelector('#nasCredModal .modal-content h2').textContent =
+        'Connect to ' + (hostname || ip);
+    document.getElementById('nasUsername').value = '';
+    document.getElementById('nasPassword').value = '';
+    document.getElementById('nasError').style.display = 'none';
+    document.getElementById('nasCredModal').style.display = 'block';
+    setTimeout(() => document.getElementById('nasUsername').focus(), 80);
+}
+
+function closeNasModal() {
+    document.getElementById('nasCredModal').style.display = 'none';
+    nasPending = null;
+}
+
+
+
+async function submitNasCredentials() {
+    if (!nasPending) return;
+    const username = document.getElementById('nasUsername').value.trim();
+    const password = document.getElementById('nasPassword').value;
+    const errEl    = document.getElementById('nasError');
+    const btn      = document.getElementById('nasConnectBtn');
+
+    errEl.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Connecting…';
+
+    try {
+        const res  = await fetch('/plugin/inky_gallery/nas_connect', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                host:     nasPending.ip,
+                username: username,
+                password: password,
+            })
+        });
+        const data = await res.json();
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+
+        if (!data.ok) {
+            errEl.textContent = data.error || 'Connection failed';
+            errEl.style.display = 'block';
+            return;
+        }
+
+        nasState.host  = nasPending.ip;
+        nasState.share = null;
+        renderNasShares(nasPending.ip, nasPending.hostname, data.shares, data.enum_failed);
+        closeNasModal();
+
+
+
+
+    } catch(e) {
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+        errEl.textContent = 'Network error: ' + e.message;
+        errEl.style.display = 'block';
+    }
+}
+
+function renderNasShares(host, hostname, shares, enumFailed) {
+    const list = document.getElementById('nasHostList');
+    list.innerHTML = '';
+    document.getElementById('nasBrowserSection').classList.remove('hidden');
+    nasTreeState.clear();
+
+    if (!shares.length) {
+        list.innerHTML = '<div class="folder-empty">No shares found — check credentials.</div>';
+        return;
+    }
+
+    shares.forEach(shareName => {
+        nasState.share = shareName;   // set default to first share
+        const node = {
+            name:         shareName,
+            path:         shareName,
+            image_count:  0,
+            has_children: true,
+            isNasShare:   true,
+            nasHost:      host,
+        };
+        list.appendChild(createNasTreeRow(node, 0));
+    });
+}
+
+async function fetchNasChildren(host, share, path) {
+    const res  = await fetch('/plugin/inky_gallery/nas_tree_children', {
+        method:  'POST',
+        headers: {'Content-Type': 'application/json'},
+        body:    JSON.stringify({host, share, path}),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Failed to load');
+    return data.children || [];
+}
+
+function createNasTreeRow(node, depth) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'tree-node';
+
+    const row = document.createElement('div');
+    row.className = 'tree-row';
+    row.setAttribute('role', 'treeitem');
+    row.setAttribute('tabindex', '0');
+    row.style.paddingLeft = `${depth * 20 + 8}px`;
+
+    const expander = document.createElement('button');
+    expander.type      = 'button';
+    expander.className = 'tree-expander';
+    expander.textContent = node.has_children ? '▶' : '';
+    expander.disabled    = !node.has_children;
+
+    const icon = document.createElement('img');
+    icon.className = 'tree-folder-icon';
+    icon.src = '/images/inky_gallery/folder.png';
+    icon.alt = '';
+
+    const nameEl = document.createElement('span');
+    nameEl.className   = 'tree-folder-name';
+    nameEl.textContent = node.name;
+
+    const countEl = document.createElement('span');
+    countEl.className   = 'tree-folder-count';
+    countEl.textContent = node.image_count > 0 ? `${node.image_count} images` : '';
+
+    row.appendChild(expander);
+    row.appendChild(icon);
+    row.appendChild(nameEl);
+    row.appendChild(countEl);
+
+    const childrenEl = document.createElement('div');
+    childrenEl.className = 'tree-children hidden';
+
+    wrapper.appendChild(row);
+    wrapper.appendChild(childrenEl);
+
+    nasTreeState.set(node.path, {
+        expanded: false, loaded: false,
+        childrenEl, expanderEl: expander, rowEl: row, depth,
+        isNasShare: node.isNasShare || false,
+        nasHost:    node.nasHost || nasState.host,
+        nasShare:   node.isNasShare ? node.name : nasState.share,
+    });
+
+    row.addEventListener('click', e => {
+        if (e.target === expander) return;
+        const s = nasTreeState.get(node.path);
+        if (node.isNasShare) nasState.share = node.name;
+        selectNasFolder(node, row, s);
+    });
+
+    expander.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!node.has_children) return;
+        if (node.isNasShare) nasState.share = node.name;
+        await toggleNasNode(node.path);
+    });
+
+    return wrapper;
+}
+
+async function toggleNasNode(path) {
+    const s = nasTreeState.get(path);
+    if (!s) return;
+
+    if (s.expanded) {
+        s.expanded = false;
+        s.childrenEl.classList.add('hidden');
+        s.expanderEl.textContent = '▶';
+        return;
+    }
+
+    if (!s.loaded) {
+        const browsePath = s.isNasShare ? '' : path;
+        try {
+            const kids = await fetchNasChildren(s.nasHost, s.nasShare, browsePath);
+            s.childrenEl.innerHTML = '';
+            kids.forEach(child => {
+                child.nasHost = s.nasHost;
+                s.childrenEl.appendChild(createNasTreeRow(child, s.depth + 1));
+            });
+            s.loaded = true;
+        } catch(err) {
+            setFolderStatus(err.message || 'Failed to load', false);
+            return;
+        }
+    }
+
+    s.expanded = true;
+    s.childrenEl.classList.remove('hidden');
+    s.expanderEl.textContent = '▼';
+}
+
+function selectNasFolder(node, rowEl, treeEntry) {
+    document.querySelectorAll('.tree-row.selected').forEach(el => el.classList.remove('selected'));
+    if (rowEl) { rowEl.classList.add('selected'); rowEl.focus(); }
+
+    const browsePath = treeEntry.isNasShare ? '' : node.path;
+    const host  = treeEntry.nasHost;
+    const share = treeEntry.nasShare;
+
+    const mountBase = `/mnt/nas/${share}`;
+    const localPath = browsePath ? `${mountBase}/${browsePath}` : mountBase;
+    document.getElementById('folder_path').value = localPath;
+    localStorage.setItem(FOLDER_STORAGE_KEY, localPath);
+
+    const label = node.image_count > 0
+        ? `${node.image_count} images found`
+        : 'No images in this folder';
+    setFolderStatus(label, node.image_count > 0);
+}
+
+// Close modal on outside click (matches InkyPi pattern)
+window.addEventListener('click', e => {
+    if (e.target === document.getElementById('nasCredModal')) closeNasModal();
+});
+
+
+
 </script>
