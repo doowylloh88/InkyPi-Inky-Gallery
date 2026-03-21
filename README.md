@@ -1,58 +1,61 @@
-# Inky Gallery
 
-An upgrade to the image album plugin.  Now with optional tag filtering, captions, image adjustments, and color presets.
+# Inky Gallery — NAS Support Branch
 
-## 🚀 Features
+This branch adds local network NAS/SMB drive browsing to the [Inky Gallery](https://github.com/doowylloh88/InkyPi-Inky-Gallery) plugin for [InkyPi](https://github.com/fatihak/InkyPi).
 
-- Connects to image albums on your Raspberry Pi
-- Loads album names dynamically
-- Loads tag suggestions dynamically
-- Optional tag filtering
-- Optional caption overlay from:
-  - IPTC image metadata
-- Image enhancement controls
-- Color presets support via `lut.json`
+## What's New
 
-## Screenshot
+-   **Network Drive Discovery** — automatically scans your local network for SMB hosts when you open the folder browser
+-   **Credential Modal** — connect to a discovered host with your username and password
+-   **Expandable Folder Tree** — browse NAS shares and sub-folders with image counts, matching the local folder browser style
+-   **Auto-Mount** — the share is mounted automatically on connect at `/mnt/nas/<share>`
+-   **Persistent Selection** — your chosen NAS folder is remembered across page loads
 
-![screenshot](https://github.com/doowylloh88/InkyPi-Inky-Gallery/blob/main/inky_gallery/docs/images/screenshot.png)
 
-![screenshot](https://github.com/doowylloh88/InkyPi-Inky-Gallery/blob/main/inky_gallery/docs/images/dog.png)
 
-## 🛠️ Installation
 
-3. Install the plugin using the InkyPi CLI, providing the plugin ID & GitHub repository URL:
+## Installation
 
 ```bash
-inkypi plugin install inky_gallery https://github.com/doowylloh88/InkyPi-Inky-Gallery
+inkypi plugin install inky_gallery https://github.com/doowylloh88/InkyPi-Inky-Gallery/tree/NAS-support
+
+```
+Then install the requirements below.
+
+## Requirements
+
+### System Package
+
+```bash
+sudo apt install cifs-utils
+
 ```
 
-## How it works
+### Python Package
 
-1.  Enter your Image Folder Name.  Images / Photos must be located in one of the following folders in the root directory.  You can uses sub-folders too.  Software like [Cyberduck](https://cyberduck.io/download/) is great for transfering photos to a Pi
--   `/Pictures`
-    
--   `/images`
-    
--   `/media`
-    
--   `/photos`
-    
-   
-2.  The plugin searches for albums and tags.  If you add / delete tags just click "Browse" and select the folder again and the plugin will repopulate the tags.
+```bash
+cd ~/InkyPi
+pip install -r src/plugins/inky_gallery/requirements.txt
 
-3. Optionally enter a tag filter (Note: png files don't carry over tags)
-    
-4.  Optionally enable captions.  Note: Captions need to be in [  ] for the plugin to display them.  For example, `[family]` or `[mountans]`
-    
-5.  Optionally choose a LUT / color preset from the drop-down
-    
-7.  The plugin fetches a random image in the album, processes it, and returns it for display
+```
 
-## Caveats
+## Usage
 
-- The LUTs / color presets can be edited in the lut.json file
-- (Optional) To save space on the Rasberry Pi, pre-process all images with  800 px width and 150 DPI using your favorite photo editing software
-- Some of the presets are based on [Inky Photo Frame ](https://github.com/mehdi7129) I highly suggest you tweak them based on your Spectra6's screen
-- The sliders for saturation, brightness, etc. will carry over to the main settings screen, but they will not be saved. I haven’t found a way around that yet. They also do not seem to affect other modules
-- Speaking of sliding, this plug-in was 100% created using vibe- coding & a lot of yelling at ChatGPT.  An actual coder should take over the project to maintain it
+1.  Open the Inky Gallery plugin settings in InkyPi
+2.  Click **Browse** — the local folder tree loads as normal
+3.  Wait a few seconds — if any SMB hosts are found on your network, a **Network Drives** section appears below the local folders
+4.  Click a discovered host to open the credential modal
+5.  Enter your NAS username and password and click **Connect**
+6.  The share mounts automatically and its folder tree appears
+7.  Browse to your photos folder and click to select it
+8.  Click **Update Now** to display an image
+
+## Notes
+
+-   Credentials are never written to disk — they are held in memory only for the session
+-   If the Pi reboots or the mount drops, simply reconnect via the UI — the folder path will be remembered but you will need to re-enter your password
+-   macOS SMB shares (shared home folders) are supported out of the box
+-   For Synology, QNAP, and Windows shares, the same username/password you use to access the share works here
+-   `impacket` can be optionally installed (`pip install impacket`) to enable full share enumeration on servers that support it
+
+
